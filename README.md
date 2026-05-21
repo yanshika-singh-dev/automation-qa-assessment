@@ -69,3 +69,14 @@ Any node fails → Build Error Payload → Post Error to Discord
   - ❌ Down/slow → posts an alert embed to Discord with status code, response time, and timestamp.
 - **Timeout/error** caught via `continueErrorOutput` and routed through the same alert path.
 - **Daily summary** at 08:00 posts a digest to the same Discord channel.
+
+## Screenshots
+
+### Task 2 — Workflow Canvas
+![Task 2 Canvas](screenshots/task2_canvas.png)
+
+### Task 2 — Discord Output
+![Discord Output](screenshots/task2_discord_output.png)
+
+### Bonus — Uptime Monitor Canvas
+![Bonus Canvas]("C:\Users\hp\Pictures\Screenshots\bonus_canvas (2).png"))
