@@ -1,0 +1,228 @@
+{
+  "name": "Task2_GitHub_Morning_Brief",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 1 }]
+        }
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Schedule Trigger (Every 1h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/search/repositories",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "topic:automation stars:>100" },
+            { "name": "sort", "value": "stars" },
+            { "name": "order", "value": "desc" },
+            { "name": "per_page", "value": "10" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "responseFormat": "json" } }
+        }
+      },
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "name": "GitHub Search Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [480, 300],
+      "credentials": { "httpHeaderAuth": { "id": "github-token", "name": "GitHub Token" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract items array from GitHub API response\nconst items = $input.first().json.items || [];\n\n// Keep only top 5, reshape to clean objects\nconst top5 = items.slice(0, 5).map((repo, idx) => ({\n  rank: idx + 1,\n  name: repo.full_name,\n  description: repo.description || 'No description',\n  stars: repo.stargazers_count,\n  language: repo.language || 'Unknown',\n  url: repo.html_url,\n  defaultBranch: repo.default_branch || 'main',\n  owner: repo.owner.login,\n  repoName: repo.name\n}));\n\nreturn top5.map(item => ({ json: item }));"
+      },
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Transform: Top 5 Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-stars",
+              "leftValue": "={{ $json.stars }}",
+              "rightValue": 1000,
+              "operator": { "type": "number", "operation": "gte" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "name": "IF Stars >= 1000",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repoName }}/readme",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github.raw+json" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "responseFormat": "text" } }
+        }
+      },
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "name": "Fetch README (Hot Repo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 180],
+      "credentials": { "httpHeaderAuth": { "id": "github-token", "name": "GitHub Token" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge README snippet into repo data\nconst repo = $('IF Stars >= 1000').first().json;\nlet readmeRaw = '';\ntry {\n  readmeRaw = $input.first().json.data || $input.first().json || '';\n} catch(e) {}\nconst readmeSnippet = String(readmeRaw).replace(/[#*`]/g, '').substring(0, 300) + '...';\nreturn [{ json: { ...repo, readmeSnippet, tier: 'HOT' } }];"
+      },
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
+      "name": "Merge README into Hot Repo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mark repos below 1000 stars as 'RISING'\nconst repo = $input.first().json;\nreturn [{ json: { ...repo, readmeSnippet: null, tier: 'RISING' } }];"
+      },
+      "id": "a1b2c3d4-0007-0007-0007-000000000007",
+      "name": "Tag as RISING",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 420]
+    },
+    {
+      "parameters": { "mode": "append", "options": {} },
+      "id": "a1b2c3d4-0008-0008-0008-000000000008",
+      "name": "Merge Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all repos into a single Discord digest message\nconst repos = $input.all().map(i => i.json);\nconst timestamp = new Date().toUTCString();\n\nconst lines = repos.map(r => {\n  const badge = r.tier === 'HOT' ? '🔥' : '📈';\n  const readme = r.readmeSnippet ? `\\n> ${r.readmeSnippet}` : '';\n  return `${badge} **[${r.rank}] ${r.name}** — ⭐ ${r.stars.toLocaleString()} | ${r.language}\\n🔗 ${r.url}${readme}`;\n}).join('\\n\\n');\n\nconst payload = {\n  username: 'GitHub Morning Brief',\n  avatar_url: 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',\n  embeds: [{\n    title: '🗞️ GitHub Automation Repos — Morning Brief',\n    description: lines,\n    color: 3447003,\n    footer: { text: `Generated at ${timestamp}` }\n  }]\n};\n\nreturn [{ json: payload }];"
+      },
+      "id": "a1b2c3d4-0009-0009-0009-000000000009",
+      "name": "Build Discord Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.webhookUrl }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0010-0010-0010-000000000010",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2160, 300],
+      "credentials": { "httpQueryAuth": { "id": "discord-webhook", "name": "Discord Webhook URL" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Called when GitHub Search or Discord post fails\nconst errorData = $input.first().json;\nconst errorMsg = {\n  username: 'n8n Error Monitor',\n  embeds: [{\n    title: '❌ Morning Brief Workflow Error',\n    description: `A node failed during execution.\\n\\n**Error:** ${JSON.stringify(errorData).substring(0,400)}`,\n    color: 15158332,\n    footer: { text: new Date().toUTCString() }\n  }]\n};\nreturn [{ json: errorMsg }];"
+      },
+      "id": "a1b2c3d4-0011-0011-0011-000000000011",
+      "name": "Build Error Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 560]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.webhookUrl }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0012-0012-0012-000000000012",
+      "name": "Post Error to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1680, 560],
+      "credentials": { "httpQueryAuth": { "id": "discord-webhook", "name": "Discord Webhook URL" } }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Every 1h)": {
+      "main": [[{ "node": "GitHub Search Repos", "type": "main", "index": 0 }]]
+    },
+    "GitHub Search Repos": {
+      "main": [[{ "node": "Transform: Top 5 Repos", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Build Error Payload", "type": "main", "index": 0 }]]
+    },
+    "Transform: Top 5 Repos": {
+      "main": [[{ "node": "IF Stars >= 1000", "type": "main", "index": 0 }]]
+    },
+    "IF Stars >= 1000": {
+      "main": [
+        [{ "node": "Fetch README (Hot Repo)", "type": "main", "index": 0 }],
+        [{ "node": "Tag as RISING", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch README (Hot Repo)": {
+      "main": [[{ "node": "Merge README into Hot Repo", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Build Error Payload", "type": "main", "index": 0 }]]
+    },
+    "Merge README into Hot Repo": {
+      "main": [[{ "node": "Merge Branches", "type": "main", "index": 0 }]]
+    },
+    "Tag as RISING": {
+      "main": [[{ "node": "Merge Branches", "type": "main", "index": 1 }]]
+    },
+    "Merge Branches": {
+      "main": [[{ "node": "Build Discord Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Discord Payload": {
+      "main": [[{ "node": "Send to Discord", "type": "main", "index": 0 }]]
+    },
+    "Send to Discord": {
+      "main": [],
+      "error": [[{ "node": "Build Error Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Error Payload": {
+      "main": [[{ "node": "Post Error to Discord", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-05-21T00:00:00.000Z",
+  "versionId": "1"
+}

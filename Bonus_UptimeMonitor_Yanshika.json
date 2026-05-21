@@ -1,0 +1,201 @@
+{
+  "name": "Bonus_UptimeMonitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+        }
+      },
+      "id": "b1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Schedule Trigger (Every 5 min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Define the target app URL to monitor\nreturn [{\n  json: {\n    targetUrl: 'https://demo.realworld.io',\n    checkTime: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "b1b2c3d4-0002-0002-0002-000000000002",
+      "name": "Set Target URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.targetUrl }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "b1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Ping App (HTTP GET)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Capture response time and status code\nconst startTime = new Date($('Set Target URL').first().json.checkTime).getTime();\nconst endTime = Date.now();\nconst responseTimeMs = endTime - startTime;\n\nconst response = $input.first().json;\nconst statusCode = response.statusCode || response.status || 200;\n\nreturn [{\n  json: {\n    url: $('Set Target URL').first().json.targetUrl,\n    statusCode,\n    responseTimeMs,\n    checkTime: $('Set Target URL').first().json.checkTime,\n    isHealthy: statusCode === 200 && responseTimeMs < 5000\n  }\n}];"
+      },
+      "id": "b1b2c3d4-0004-0004-0004-000000000004",
+      "name": "Measure Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-healthy",
+              "leftValue": "={{ $json.isHealthy }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1b2c3d4-0005-0005-0005-000000000005",
+      "name": "IF Healthy (200 + fast)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// App is UP — log silently, no Discord noise\nconsole.log('Uptime OK:', JSON.stringify($input.first().json));\nreturn [];"
+      },
+      "id": "b1b2c3d4-0006-0006-0006-000000000006",
+      "name": "Log OK (silent)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build alert payload for DOWN / slow / non-200\nconst d = $input.first().json;\nconst isTimeout = !d.statusCode;\nconst statusLabel = isTimeout ? 'TIMEOUT / UNREACHABLE' : `HTTP ${d.statusCode}`;\nconst slowWarning = d.responseTimeMs > 5000 ? ' ⚠️ Slow response detected.' : '';\n\nreturn [{\n  json: {\n    username: 'Uptime Monitor',\n    avatar_url: 'https://cdn-icons-png.flaticon.com/512/1010/1010888.png',\n    embeds: [{\n      title: '🚨 App Down / Degraded',\n      description: [\n        `**URL:** ${d.url}`,\n        `**Status:** ${statusLabel}${slowWarning}`,\n        `**Response Time:** ${d.responseTimeMs ?? 'N/A'} ms`,\n        `**Detected at:** ${d.checkTime}`\n      ].join('\\n'),\n      color: 15158332\n    }]\n  }\n}];"
+      },
+      "id": "b1b2c3d4-0007-0007-0007-000000000007",
+      "name": "Build Alert Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle connection error (app completely unreachable)\nconst err = $input.first().json;\nreturn [{\n  json: {\n    url: $('Set Target URL').first().json.targetUrl,\n    statusCode: null,\n    responseTimeMs: null,\n    checkTime: $('Set Target URL').first().json.checkTime,\n    isHealthy: false,\n    error: err.message || JSON.stringify(err)\n  }\n}];"
+      },
+      "id": "b1b2c3d4-0008-0008-0008-000000000008",
+      "name": "Handle Timeout / Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 520]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.webhookUrl }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "b1b2c3d4-0009-0009-0009-000000000009",
+      "name": "Post Alert to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 420],
+      "credentials": { "httpQueryAuth": { "id": "discord-webhook", "name": "Discord Webhook URL" } }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }]
+        }
+      },
+      "id": "b1b2c3d4-0010-0010-0010-000000000010",
+      "name": "Daily Summary Trigger (8 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Daily summary — in production this would aggregate logs from a DB or n8n static data\n// For demo purposes we send a summary template\nconst now = new Date();\nreturn [{\n  json: {\n    username: 'Uptime Monitor',\n    embeds: [{\n      title: '📊 Daily Uptime Summary',\n      description: [\n        `**Date:** ${now.toDateString()}`,\n        `**Monitored App:** https://demo.realworld.io`,\n        `**Check Frequency:** Every 5 minutes`,\n        `**Total Checks:** ~288`,\n        '**Incidents logged:** See n8n execution history',\n        '',\n        '_To aggregate real stats, connect this workflow to a database or n8n static data store._'\n      ].join('\\n'),\n      color: 3447003,\n      footer: { text: 'Uptime Monitor — Automation & QA Assessment' }\n    }]\n  }\n}];"
+      },
+      "id": "b1b2c3d4-0011-0011-0011-000000000011",
+      "name": "Build Daily Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 620]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.webhookUrl }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "b1b2c3d4-0012-0012-0012-000000000012",
+      "name": "Post Daily Summary to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 620],
+      "credentials": { "httpQueryAuth": { "id": "discord-webhook", "name": "Discord Webhook URL" } }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Every 5 min)": {
+      "main": [[{ "node": "Set Target URL", "type": "main", "index": 0 }]]
+    },
+    "Set Target URL": {
+      "main": [[{ "node": "Ping App (HTTP GET)", "type": "main", "index": 0 }]]
+    },
+    "Ping App (HTTP GET)": {
+      "main": [[{ "node": "Measure Response", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Handle Timeout / Error", "type": "main", "index": 0 }]]
+    },
+    "Measure Response": {
+      "main": [[{ "node": "IF Healthy (200 + fast)", "type": "main", "index": 0 }]]
+    },
+    "IF Healthy (200 + fast)": {
+      "main": [
+        [{ "node": "Log OK (silent)", "type": "main", "index": 0 }],
+        [{ "node": "Build Alert Payload", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handle Timeout / Error": {
+      "main": [[{ "node": "Build Alert Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Alert Payload": {
+      "main": [[{ "node": "Post Alert to Discord", "type": "main", "index": 0 }]]
+    },
+    "Daily Summary Trigger (8 AM)": {
+      "main": [[{ "node": "Build Daily Summary", "type": "main", "index": 0 }]]
+    },
+    "Build Daily Summary": {
+      "main": [[{ "node": "Post Daily Summary to Discord", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2026-05-21T00:00:00.000Z",
+  "versionId": "1"
+}
